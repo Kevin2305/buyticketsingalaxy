@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-import OrdersFromCLOTAUI
+import BuyTicketsInGalaxyFun
 import sys
 from PyQt5 import QtWidgets
-import OrdersFromCLOTAFun
+import BuyTicketsInGalaxyUI
 
-class MyWidget(QtWidgets.QWidget,OrdersFromCLOTAUI.Ui_Form):
+class MyWidget(QtWidgets.QWidget,BuyTicketsInGalaxyUI.Ui_Form):
     def __init__(self,parent=None):
         super(MyWidget,self).__init__(parent)
         self.setupUi(self)
@@ -13,7 +13,7 @@ class MyWidget(QtWidgets.QWidget,OrdersFromCLOTAUI.Ui_Form):
 
 
 if __name__ == "__main__":
-    OrdersFromCLOTAFun.InitLogger()
+    BuyTicketsInGalaxyFun.InitLogger()
     app =  QtWidgets.QApplication(sys.argv)
     mf=MyWidget()
     mf.show()
