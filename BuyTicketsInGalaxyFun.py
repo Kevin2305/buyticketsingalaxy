@@ -30,7 +30,7 @@ def InitLogger():
         else:
             loglevel = logging.WARN
     else:
-        loglevel = logging.DEBUG
+        loglevel = logging.INFO
     global mylogger
     #loglevel = logging.WARN
     handler1 = logging.StreamHandler()
@@ -135,9 +135,9 @@ def EventTicketHold_2(messageid,sessionid,eventid,qty,item,sectionid):
 
 def confirmOrder_3(orderline,messageid,sessionid,customerid,visitdate):
     stamp = datetime.today().strftime("%Y%m%d%H%M%S")
-    govid = 'gov' + stamp
+    govid = 'GovID' + stamp
     galid = 'GAL' + stamp
-    endorsid = 'endors_' + stamp
+    endorsid = 'Endors_' + stamp
     orderdate = orderline.getCreateDate()
     cmd_orderline_payment = """
     <OrderLine>
@@ -181,8 +181,8 @@ def confirmOrder_3(orderline,messageid,sessionid,customerid,visitdate):
     				<OrderStatus>2</OrderStatus>
     				<OrderContact>
     					<Contact>
-    					<FirstName>kevin</FirstName>
-    					<LastName>wu</LastName>
+    					<FirstName>fname</FirstName>
+    					<LastName>lname</LastName>
     					<Email>tradeclient@tradeclient.com</Email>
     					<IdentificationNo>$govid$</IdentificationNo>
     					</Contact>
@@ -199,7 +199,7 @@ def confirmOrder_3(orderline,messageid,sessionid,customerid,visitdate):
                     </OrderLines>
     				<UserFields>
     					<UserField2>YES</UserField2>
-    					<UserField3>PYTHON</UserField3>
+    					<UserField3>eGAL_API</UserField3>
     				</UserFields>
     			</Order>
     		</Orders>
@@ -220,9 +220,11 @@ def confirmOrder_3(orderline,messageid,sessionid,customerid,visitdate):
     if response:
         body = xml2Dict(response)['Envelope']['Body']
         if body.get('CreateTransactionResponse'):
-            return body['CreateTransactionResponse']['TransactionData']['OrderID'],endorsid
-        return 0,0
-    return 0,0
+            return body['CreateTransactionResponse']['TransactionData']['OrderID'],endorsid,govid
+        if body.get('OrderStatusErrors'):
+            return 0,body['OrderStatusErrors']['OrderStatusError']['ErrorText'],0
+        return 0,"confirmOrder_3 response error",0
+    return 0,"confirmOrder_3 no response",0
     
 def updateGovID(galorderid,newid):
     cmd = """
@@ -327,9 +329,16 @@ def queryItems(customerid,messageid):
                 items = []
                 for item in itemlist['Item']:
                     t_item = None
+                    mylogger.debug("Parent PLU: " + item['PLU'])
                     t_item = Item( item['PLU'] , item['Name'] , item['Description'] , item['Price'] , item['EventTypeID'] , item['EventID'] , item['SectionID'] , item['Kind'] , None)
                     if item.get('PackageDetails'):
-                        for package in item['PackageDetails']['PackageDetail']:
+                        packages = item['PackageDetails']['PackageDetail']
+                        if not isinstance(packages,list):
+                            l = []
+                            l.append(packages)
+                            packages = l
+                        for package in packages:
+                            mylogger.debug("Child PLU: " + package['PLU'])
                             t_item.addPackageDetails( Item( package['PLU'] , package['Name'] , package['Description'] , package['Price'] , package['EventTypeID'] , package['EventID'] , package['SectionID'] , package['Kind'] , None ) )
                     items.append(t_item)
                 return 1,items
@@ -359,10 +368,10 @@ def post2eGalaxy(enviroment,xmlrequest):
         url = url_dev
     if enviroment == 'lt':
         url = url_lt
-    mylogger.debug("request: " + xmlrequest)
+    mylogger.info("request: " + xmlrequest)
     try:
         ret = post(url=url,data=xmlrequest.encode('utf-8'),headers={'Content-Type':'application/xml','charset':'utf-8'},timeout=60)
-        mylogger.debug("response: " + ret.content.decode('utf-8'))
+        mylogger.info("response: " + ret.content.decode('utf-8'))
         if ret.status_code == 200:
             return ret.content.decode('utf-8')
         return None
@@ -375,7 +384,8 @@ def getItemsByKindID(itemlist,**kwargs):
         tktlist = []
         for i in itemlist:
             if i.getKindID() in kwargs['KindIDs']:
-                tktlist.append(i)
+                if i.getEventTypeID() in (0,1):
+                    tktlist.append(i)
         return tktlist
     else:
         return itemlist
@@ -405,6 +415,8 @@ def checkItemAvailable(plu,items,visitdate):
     item = findItem(plu,items)
     if item:
         if item.getKindID() == 1:
+            if item.getEventTypeID() == 0:
+                return 1,item
             eventid,sectionid = queryEventID(msgid,visitdate,visitdate,item)
             if int(eventid) > 0:
                 return 1,item
@@ -462,21 +474,25 @@ def holdEvents(plu,qty,item,visitdate,messageid):
             mylogger.debug(orderlines.toXMLString())
 
         if item.getKindID() == 1:
-            eventid,sectionid = queryEventID(msgid,startdate,enddate,item)
-            if int(eventid) > 0:
-                mylogger.debug('eventid: ' + eventid)
-                ok,capacityid = EventTicketHold_2(msgid,sessionid,eventid,qty,item,sectionid)
-                if ok > 0:
-                    mylogger.debug('capacityid: ' + capacityid)
-                    orderlines = OrderLine(item,qty,eventid,capacityid,createdate)
-                else:
-                    msg = capacityid
-                    mylogger.error("query capacity ID error: " + msg)
-                    return 0,msg
+            if item.getEventTypeID() == 0:
+                orderlines = OrderLine(item,qty,0,0,createdate)
+                mylogger.debug(orderlines.toXMLString())
             else:
-                mylogger.error("query eventID error")
-                return 0,"query eventID error"
-            mylogger.debug(orderlines.toXMLString())
+                eventid,sectionid = queryEventID(msgid,startdate,enddate,item)
+                if int(eventid) > 0:
+                    mylogger.debug('eventid: ' + eventid)
+                    ok,capacityid = EventTicketHold_2(msgid,sessionid,eventid,qty,item,sectionid)
+                    if ok > 0:
+                        mylogger.debug('capacityid: ' + capacityid)
+                        orderlines = OrderLine(item,qty,eventid,capacityid,createdate)
+                    else:
+                        msg = capacityid
+                        mylogger.error("query capacity ID error: " + msg)
+                        return 0,msg
+                else:
+                    mylogger.error("query eventID error")
+                    return 0,"query eventID error"
+                mylogger.debug(orderlines.toXMLString())
     
         if item.getKindID() == 2:
             orderlines = OrderLine(item,qty,0,0,createdate,1)
@@ -490,12 +506,14 @@ def confirmOrder(ret_holdevent,customerid,messageid):
     sessionid = ret_holdevent['sessionid']
     visitdate = ret_holdevent['visitdate']
     if orderlines:
-        orderid,endorsid = confirmOrder_3(orderlines,messageid,sessionid,customerid,visitdate)
+        orderid,endorsid,govid = confirmOrder_3(orderlines,messageid,sessionid,customerid,visitdate)
         if orderid:
             mylogger.debug("GAL order ID: " + str(orderid))
             mylogger.debug("Endorsment ID: " + str(endorsid))
-            return 1,"GAL ID=" + str(orderid) + ", EndorsID=" + str(endorsid)
-        return 0,"Confirm Order Failed"
+            mylogger.debug("Endorsment ID: " + str(govid))
+            return 2,"GalID=" + str(orderid) + ", EndorsID=" + str(endorsid) + ", GovID=" + str(govid)
+        if endorsid:
+            return 1,endorsid
     return 0,"No OrderLines in Confirm Order Process"
 
 

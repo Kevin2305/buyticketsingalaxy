@@ -65,7 +65,7 @@ class Ui_Form(object):
         self.label.setText(_translate("Form", "Galaxy Customer ID"))
         self.button_cleanit.setText(_translate("Form", "Clean it"))
 
-        self.button_buyit.setDisabled(True)
+        self.setButtons(1,0,0)
         self.initENV()
 
     def initENV(self):
@@ -85,25 +85,52 @@ class Ui_Form(object):
             BuyTicketsInGalaxyFun.env = 'dev'
         if self.env_comboBox.currentText() == 'SL/LT':
             BuyTicketsInGalaxyFun.env = 'lt'
-
+        
+        self.setButtons(0,0,0)
         custid = self.linedit_custid.text()
+
+        self.worker = GetProductWorkder(custid)
+
+        self.worker.huaisig.connect(self.showErrProducts)
+        self.worker.haosig.connect(self.showGetProducts)
+        self.worker.start()
+
+        """
         flag,self.items = BuyTicketsInGalaxyFun.getProducts(custid)
         if flag > 0:
             for p in self.items:
                 self.listWidget.addItem(p.toStringBrief())
             self.enableBuyit()
             return 0
-        self.listWidget.addItem("No Items Or Customer ID Not Exists")
-        self.disableBuyit()
+        """
+        #self.listWidget.addItem("No Items Or Customer ID Not Exists")
+    
+    def showGetProducts(self,items):
+        self.items = items
+        for i in items:
+            self.listWidget.addItem(i.toStringBrief())
+        self.setButtons(1,1,1)
+        
+    def showErrProducts(self,msg):
+        self.listWidget.addItem(msg)
+        self.setButtons(1,0,1)
 
-    def enableBuyit(self):
-        if not self.button_buyit.isEnabled():
+    def setButtons(self,get,buy,clean):
+        if get:
+            self.button_getproducts.setEnabled(True)
+        else:
+            self.button_getproducts.setDisabled(True)
+        if buy:
             self.button_buyit.setEnabled(True)
-
-    def disableBuyit(self):
-        if self.button_buyit.isEnabled():
+        else:
             self.button_buyit.setDisabled(True)
+        if clean:
+            self.button_cleanit.setEnabled(True)
+        else:
+            self.button_cleanit.setDisabled(True)
 
+
+    """
     def checkItem(self):
         plu = self.listWidget.selectedItems()[0].text().split(",")[0]
         vd = self.calendarWidget.selectedDate().toString('yyyy-MM-dd')
@@ -114,19 +141,92 @@ class Ui_Form(object):
         else:
             self.textBrowser_showordereno.append('{} is NOT available for product {}'.format(item,plu))
             return 0,0
-
+    
+    def buyit1(self):
+        rpl = QtWidgets.QMessageBox.question(
+            self,
+            "Question?","Are You Sure? {}".format(self.listWidget.selectedItems()[0].text().split(",")[2]),
+            QtWidgets.QMessageBox.Yes,QtWidgets.QMessageBox.No
+            )
+        if rpl == QtWidgets.QMessageBox.Yes:
+            plu,item = self.checkItem()
+            if plu:
+                messageid = BuyTicketsInGalaxyFun.getNextMessageID()
+                tktnum = int(self.spinbox_ticketnumber.text())
+                customerid = self.linedit_custid.text()
+                visitdate = self.calendarWidget.selectedDate().toString('yyyy-MM-dd')
+                flag,ret_holdevent = BuyTicketsInGalaxyFun.holdEvents(plu,tktnum,item,visitdate,messageid)
+                if flag:
+                    flag,msg = BuyTicketsInGalaxyFun.confirmOrder(ret_holdevent,customerid,messageid)
+                    if flag:
+                        self.textBrowser_showordereno.append(msg)
+                        return 0
+                self.textBrowser_showordereno.append(ret_holdevent)
+                return 1
+    """
     def buyit(self):
+        self.setButtons(0,0,0)
+        plu = self.listWidget.selectedItems()[0].text().split(",")[0]
+        visitdate = self.calendarWidget.selectedDate().toString('yyyy-MM-dd')
+        messageid = BuyTicketsInGalaxyFun.getNextMessageID()
+        tktnum = int(self.spinbox_ticketnumber.text())
+        customerid = self.linedit_custid.text()
+        items = self.items
+        self.thread = BuyitWorker(plu,tktnum,visitdate,items,customerid,messageid)
+        self.thread.sig.connect(self.showMSG)
+        self.thread.start()
+
+    def showMSG(self,msg):
+        import re
+        if not re.findall('Processing',msg):
+            self.setButtons(1,1,1)
+        self.textBrowser_showordereno.append(msg)
+
+class GetProductWorkder(QtCore.QThread):
+    huaisig = QtCore.pyqtSignal(str)
+    haosig = QtCore.pyqtSignal(list)
+
+    def __init__(self,customerid):
+        super(GetProductWorkder,self).__init__()
+        self.customerid = customerid
+
+    def run(self):
+        flag,items = BuyTicketsInGalaxyFun.getProducts(self.customerid)
+        if flag > 0:
+            self.haosig.emit(items)
+        else:
+            self.huaisig.emit("No Items Or Customer ID Not Exists")
+
+class BuyitWorker(QtCore.QThread):
+    sig = QtCore.pyqtSignal(str)
+    def __init__(self,plu,tktnum,visitdate,items,customerid,messageid):
+        super(BuyitWorker,self).__init__()
+        self.plu = plu
+        self.tktnum = tktnum
+        self.visitdate = visitdate
+        self.messageid = messageid
+        self.customerid = customerid
+        self.items = items
+
+    def run(self):
         plu,item = self.checkItem()
         if plu:
-            messageid = BuyTicketsInGalaxyFun.getNextMessageID()
-            tktnum = int(self.spinbox_ticketnumber.text())
-            customerid = self.linedit_custid.text()
-            visitdate = self.calendarWidget.selectedDate().toString('yyyy-MM-dd')
-            flag,ret_holdevent = BuyTicketsInGalaxyFun.holdEvents(plu,tktnum,item,visitdate,messageid)
+            flag,ret_holdevent = BuyTicketsInGalaxyFun.holdEvents(plu,self.tktnum,item,self.visitdate,self.messageid)
             if flag:
-                flag,msg = BuyTicketsInGalaxyFun.confirmOrder(ret_holdevent,customerid,messageid)
+                flag,msg = BuyTicketsInGalaxyFun.confirmOrder(ret_holdevent,self.customerid,self.messageid)
                 if flag:
-                    self.textBrowser_showordereno.append(msg)
-                return 0
-            self.textBrowser_showordereno.append(ret_holdevent)
-            return 1
+                    self.sig.emit(msg)
+            else:
+                self.sig.emit(ret_holdevent)
+
+
+    def checkItem(self):
+        plu = self.plu
+        vd = self.visitdate
+        flag,item = BuyTicketsInGalaxyFun.checkItemAvailable(plu,self.items,vd)
+        if flag > 0:
+            self.sig.emit('{} is available for product {}, Processing'.format(vd,plu))
+            return plu,item
+        else:
+            self.textBrowser_showordereno.append('{} is NOT available for product {}'.format(item,plu))
+            return 0,0
